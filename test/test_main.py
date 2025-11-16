@@ -1,4 +1,5 @@
 import toml
+import glob
 import subprocess
 
 def compile_and_run(program):
@@ -49,4 +50,7 @@ def test(filename):
     print(f"Testing {data["name"]} ({filename}) .......... {result}")
 
 
-test("./test-0.toml")
+tests = glob.glob("./*.toml")
+
+for file in tests:
+    test(file)

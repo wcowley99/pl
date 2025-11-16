@@ -1,0 +1,13 @@
+name = "variable shadowing"
+
+[input]
+program = """
+let x = let x = 5 in inc(x) in 
+let x = let y = 10 in inc(x) in
+let x = inc(x) in
+x
+"""
+
+[expected]
+exit_code = 8
+stdout = ""
