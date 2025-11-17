@@ -1,0 +1,10 @@
+name = "if with nested let expression"
+
+[input]
+program = """
+if let x = -1 in inc(x) then 5 else 10
+"""
+
+[expected]
+exit_code = 10
+stdout = ""

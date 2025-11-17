@@ -3,12 +3,15 @@ import glob
 import subprocess
 
 def compile_and_run(program):
-    subprocess.run(
+    result = subprocess.run(
         ["../target/debug/pl"],
         input=program,
         text=True,
         capture_output=True,
     )
+
+    if result.returncode != 0:
+        return False
 
     result = subprocess.run(
         ["./a.out"],
@@ -41,13 +44,15 @@ def test(filename):
 
     prog_result = compile_and_run(program)
 
-    if data["expected"] is None:
+    if prog_result == False:
+        result = "Compilation Failed"
+    elif data["expected"] is None:
         print("No expected outputs provided")
         result = "Success"
     else:
         result = "Success" if validate(data["expected"], prog_result) else "Failure"
 
-    print(f"Testing {data["name"]} ({filename}) .......... {result}")
+    print(f"Testing {data['name']} ({filename}) .......... {result}")
 
 
 tests = glob.glob("./*.toml")

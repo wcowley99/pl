@@ -24,6 +24,9 @@ pub enum Lexeme {
     Inc,
     Let,
     In,
+    If,
+    Then,
+    Else,
 }
 
 impl Lexeme {
@@ -73,6 +76,9 @@ fn next_identifier(chars: &mut Peekable<Chars>) -> Lexeme {
         "inc" => Lexeme::Inc,
         "let" => Lexeme::Let,
         "in" => Lexeme::In,
+        "if" => Lexeme::If,
+        "then" => Lexeme::Then,
+        "else" => Lexeme::Else,
         _ => Lexeme::Id(builder),
     }
 }
@@ -146,6 +152,19 @@ fn parse_expr(input: &mut VecDeque<Lexeme>) -> Expr {
                     }
                     _ => panic!("Expected identifier"),
                 }
+            }
+            Lexeme::If => {
+                let cond = parse_expr(input);
+
+                assert!(input.pop_front().unwrap() == Lexeme::Then);
+
+                let body = parse_expr(input);
+
+                assert!(input.pop_front().unwrap() == Lexeme::Else);
+
+                let branch = parse_expr(input);
+
+                Expr::conditional(cond, body, branch)
             }
             _ => panic!(),
         }
@@ -260,5 +279,12 @@ mod tests {
     fn source_to_interp2() {
         let input = "let x = 5 in inc(x)";
         assert_eq!(parse(lex(input)).interp(), 6);
+    }
+
+
+    #[test]
+    fn source_to_interp3() {
+        let input = "if 5 then 1 else 2";
+        assert_eq!(parse(lex(input)).interp(), 1);
     }
 }
