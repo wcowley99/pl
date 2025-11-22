@@ -1,4 +1,4 @@
-use std::iter::Peekable;
+use std::{iter::Peekable, os::linux::raw::stat};
 
 use crate::parser::{Lex, Lexeme};
 
@@ -28,6 +28,32 @@ enum State {
     MkMul,
 }
 
+enum Action {
+    ShiftPush(State),
+    ShiftTo(State),
+    ShiftSame,
+    ReduceTo(State),
+    Error,
+}
+
+fn next_action(state: Option<State>, token: &Lexeme) -> Action {
+    match (state, token) {
+        (None, Lexeme::Num(_)) => Action::ShiftPush(State::MkNum),
+
+        (Some(State::MkAdd) | Some(State::MkMul), Lexeme::Num(_)) => Action::ShiftSame,
+
+        (Some(State::MkNum), Lexeme::Plus) => Action::ShiftTo(State::MkAdd),
+        (Some(State::MkAdd) | Some(State::MkMul), Lexeme::Plus) => Action::ReduceTo(State::MkAdd),
+
+        (Some(State::MkNum), Lexeme::Star) => Action::ShiftTo(State::MkMul),
+        (Some(State::MkAdd), Lexeme::Star) => Action::ShiftPush(State::MkMul),
+        (Some(State::MkMul), Lexeme::Star) => Action::ReduceTo(State::MkMul),
+
+        (None, Lexeme::Plus | Lexeme::Star) => Action::Error,
+        _ => Action::Error,
+    }
+}
+
 pub struct ExprPool(Vec<Expr>);
 
 impl ExprPool {
@@ -52,37 +78,24 @@ impl ExprPool {
         self.expr_parse(&mut lex)
     }
 
-    fn factor_start(&mut self, lex: &mut Lex) -> Result<ExprRef, String> {
-        let token = lex.require_next()?;
+    fn reduce(&mut self, terms: &mut Vec<Expr>, states: &mut Vec<State>) -> Result<(), String> {
+        match states.pop() {
+            Some(State::MkAdd) => {
+                let e2 = terms.pop().unwrap();
+                let e1 = terms.pop().unwrap();
 
-        match token {
-            Lexeme::Num(n) => {
-                let expr = self.add(Expr::Num(n));
-                match lex.peek() {
-                    None => Ok(expr),
-                    t => Err(format!("Unexpected token {:?}", t)),
-                }
+                terms.push(Expr::Binary(BinOp::Add, self.add(e1), self.add(e2)));
+                Ok(())
             }
-            t => Err(format!("Unexpected token {:?}", t)),
-        }
-    }
+            Some(State::MkMul) => {
+                let e2 = terms.pop().unwrap();
+                let e1 = terms.pop().unwrap();
 
-    fn expr_start(&mut self, lex: &mut Lex) -> Result<ExprRef, String> {
-        let token = lex.require_next()?;
-        match token {
-            Lexeme::Num(n) => {
-                let expr = self.add(Expr::Num(n));
-                match lex.next() {
-                    Some(Lexeme::Plus) => {
-                        let factor = self.expr_start(lex)?;
-                        Ok(self.add(Expr::Binary(BinOp::Add, expr, factor)))
-                    }
-                    Some(Lexeme::RParen) | Some(Lexeme::In) | None => Ok(expr),
-                    t => Err(format!("Unexpected token {:?}", t)),
-                }
+                terms.push(Expr::Binary(BinOp::Mul, self.add(e1), self.add(e2)));
+                Ok(())
             }
-            Lexeme::Id(s) => Ok(self.add(Expr::Id(s))),
-            t => Err(format!("Unexpected token {:?}", t)),
+            Some(State::MkNum) => Ok(()),
+            s => Err(format!("Attempted to reduce irreducible state {:?}", s)),
         }
     }
 
@@ -101,33 +114,33 @@ impl ExprPool {
                     states.push(State::MkNum);
                 }
                 (Some(State::MkAdd), Lexeme::Num(n)) => terms.push(Expr::Num(*n)),
+                (Some(State::MkMul), Lexeme::Num(n)) => terms.push(Expr::Num(*n)),
                 (Some(State::MkNum), Lexeme::Plus) => {
                     states.pop();
                     states.push(State::MkAdd);
                 }
-                (Some(State::MkAdd), Lexeme::Plus) => {
-                    let e2 = terms.pop().unwrap();
-                    let e1 = terms.pop().unwrap();
-
-                    terms.push(Expr::Binary(BinOp::Add, self.add(e1), self.add(e2)));
+                (Some(State::MkAdd), Lexeme::Plus) | (Some(State::MkMul), Lexeme::Plus) => {
+                    self.reduce(&mut terms, &mut states)?;
+                    states.push(State::MkAdd);
                 }
-                (Some(State::MkMul), Lexeme::Plus) => todo!(),
-                (None, Lexeme::Plus) => return Err(format!("Unexpected token {:?}", token)),
-                _ => todo!(),
+                (Some(State::MkNum), Lexeme::Star) => {
+                    states.pop();
+                    states.push(State::MkMul);
+                }
+                (Some(State::MkAdd), Lexeme::Star) => states.push(State::MkMul),
+                (Some(State::MkMul), Lexeme::Star) => {
+                    self.reduce(&mut terms, &mut states)?;
+                    states.push(State::MkMul);
+                }
+                (None, Lexeme::Plus) | (None, Lexeme::Star) => {
+                    return Err(format!("Unexpected token {:?}", token));
+                }
+                s => return Err(format!("Unexpected {:?}", s)),
             }
         }
 
-        while let Some(state) = states.pop() {
-            match state {
-                State::MkAdd => {
-                    let e2 = terms.pop().unwrap();
-                    let e1 = terms.pop().unwrap();
-
-                    terms.push(Expr::Binary(BinOp::Add, self.add(e1), self.add(e2)));
-                }
-                State::MkNum => (),
-                _ => todo!(),
-            }
+        while !states.is_empty() {
+            self.reduce(&mut terms, &mut states)?;
         }
 
         let expr = self.add(terms.pop().unwrap());
@@ -193,6 +206,31 @@ mod test {
                 Expr::Num(25),
                 Expr::Binary(BinOp::Add, ExprRef(0), ExprRef(1)),
                 Expr::Num(9),
+                Expr::Binary(BinOp::Add, ExprRef(2), ExprRef(3)),
+            ]
+        )
+    }
+
+    #[test]
+    fn test_bin_ops_observe_precedence() {
+        let mut pool = ExprPool::new();
+        let lex = Lex::new(vec![
+            Lexeme::Num(12),
+            Lexeme::Plus,
+            Lexeme::Num(25),
+            Lexeme::Star,
+            Lexeme::Num(9),
+        ]);
+        let result = pool.parse(lex);
+
+        assert_eq!(result, Ok(ExprRef(4)));
+        assert_eq!(
+            pool.0,
+            vec![
+                Expr::Num(25),
+                Expr::Num(9),
+                Expr::Num(12),
+                Expr::Binary(BinOp::Mul, ExprRef(0), ExprRef(1)),
                 Expr::Binary(BinOp::Add, ExprRef(2), ExprRef(3)),
             ]
         )
