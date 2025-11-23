@@ -1,26 +1,23 @@
 use std::{
     collections::HashMap,
-    env,
     io::{self, Read, Write},
     process::{Command, Stdio},
 };
 
-use crate::{
-    ast::Expr,
-    parser::{lex, parse},
-};
+use crate::{expr::ExprPool, lex::Lex, parse::parse};
 
-mod ast;
 mod expr;
 mod instr;
-mod parser;
+mod lex;
+mod parse;
 
 fn compile<S: Into<String>>(input: S) -> String {
-    let lexemes = lex(input);
-    let exprs = parse(lexemes);
-    let compiled = exprs.compile(HashMap::new());
+    let lex = Lex::new(input);
+    let mut pool = ExprPool::new();
+    let result = parse(&mut pool, lex);
+    // let compiled = exprs.compile(HashMap::new());
 
-    compiled
+    "temp".to_owned()
 }
 
 fn main() -> io::Result<()> {

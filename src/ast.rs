@@ -129,37 +129,4 @@ impl Expr {
             .join("\n")
         )
     }
-
-    pub fn subst(&self, env: &HashMap<String, Expr>) -> Expr {
-        match self {
-            Expr::Id(id) => env.get(id).unwrap().clone(),
-            _ => self.clone(),
-        }
-    }
-
-    pub fn eval(&self, env: &HashMap<String, Expr>) -> i64 {
-        match self {
-            Expr::Literal(val) => *val,
-            Expr::Add1(expr) => 1 + expr.eval(env),
-            Expr::Let(id, expr, body) => {
-                let mut env = env.clone();
-                env.insert(id.clone(), expr.subst(&env));
-
-                body.eval(&env)
-            }
-            Expr::Id(id) => env.get(id).unwrap().clone().eval(env),
-            Expr::If(cond, body, branch) => {
-                if cond.eval(env) != 0 {
-                    body.eval(env)
-                } else {
-                    branch.eval(env)
-                }
-            }
-        }
-    }
-
-    pub fn interp(&self) -> i64 {
-        let env = HashMap::new();
-        self.eval(&env)
-    }
 }

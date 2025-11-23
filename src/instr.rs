@@ -1,7 +1,3 @@
-use std::fmt::format;
-
-use crate::ast::Op;
-
 #[derive(Debug, Copy, Clone)]
 pub enum Reg {
     RAX,
