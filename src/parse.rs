@@ -1,7 +1,116 @@
+use std::collections::{HashMap, HashSet};
+
 use crate::{
     expr::{BinOp, Expr, ExprPool, ExprRef},
     lex::{Lex, Lexeme},
 };
+
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+enum Terminal {
+    Let,
+    Id,
+    Eq,
+    In,
+    Plus,
+    Star,
+    Num,
+    LParen,
+    RParen,
+    Eof,
+}
+
+impl Into<Token> for Terminal {
+    fn into(self) -> Token {
+        Token::Terminal(self)
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+enum NonTerminal {
+    Start,
+    Expr,
+    Factor,
+    Term,
+}
+
+impl Into<Token> for NonTerminal {
+    fn into(self) -> Token {
+        Token::NonTerminal(self)
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+enum Token {
+    Terminal(Terminal),
+    NonTerminal(NonTerminal),
+}
+
+struct Rule {
+    pub symbol: NonTerminal,
+    pub expr: Vec<Token>,
+}
+
+impl Rule {
+    pub fn new(symbol: NonTerminal, expr: Vec<Token>) -> Self {
+        Self { symbol, expr }
+    }
+}
+
+// fn gen_first_table(rules: &Vec<Rule>) -> HashMap<NonTerminal, HashSet<Terminal>> {
+//     let mut table: HashMap<NonTerminal, HashSet<Terminal>> = HashMap::new();
+//     let mut changed = true;
+//     while changed {
+//         changed = false;
+//         for rule in rules {
+//             let lhs = rule.symbol;
+//             let first = rule.expr[0];
+//             match first {
+//                 Token::Terminal(t) => match table.get(&lhs) {
+//                     Some(terms) => changed |= terms.insert(t),
+//                     None => changed |= table.insert(lhs, HashSet::from([t])).is_none(),
+//                 },
+//                 Token::NonTerminal(t) => {
+//                     let terms = first
+//                         .iter()
+//                         .filter(|(nt, _)| *nt == t)
+//                         .flat_map(|(nt, term)| {
+//                             if *nt == t {
+//                                 (nt, term)
+//                             } else {
+//                             }
+//                         })
+//                         .collect::<Vec<_>>();
+//
+//                     for term in terms {
+//                         if first.contains(&(rule.symbol, term)) {
+//                             first.push((rule.symbol, term));
+//                         } else {
+//                             changed = true;
+//                         }
+//                     }
+//                 }
+//             }
+//         }
+//     }
+//     return table;
+// }
+//
+// fn temp() {
+//     use NonTerminal::*;
+//     use Terminal::*;
+//     let rules = vec![
+//         Rule::new(Start, vec![Expr.into()]),
+//         Rule::new(Expr, vec![Expr.into(), Plus.into(), Factor.into()]),
+//         Rule::new(Expr, vec![Factor.into()]),
+//         Rule::new(Factor, vec![Factor.into(), Star.into(), Term.into()]),
+//         Rule::new(Factor, vec![Term.into()]),
+//         Rule::new(Term, vec![LParen.into(), Expr.into(), RParen.into()]),
+//         Rule::new(Term, vec![Num.into()]),
+//         Rule::new(Term, vec![Id.into()]),
+//     ];
+//
+//     let first = gen_first_table(&rules);
+// }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum State {
@@ -24,7 +133,6 @@ enum Action {
     MoveTo(State),
     ReduceTo(State),
     Reduce,
-    ReduceInPlace,
     Error,
     Accept,
 }
@@ -38,7 +146,7 @@ fn next_action(state: Option<&State>, token: Option<&Lexeme>) -> Action {
 
         (Some(MkAdd) | Some(MkMul), Some(Num(_))) => Action::ShiftSame,
 
-        (Some(MkNum), Some(Plus)) => Action::ShiftTo(MkAdd),
+        (Some(MkNum) | Some(MkVar), Some(Plus)) => Action::ShiftTo(MkAdd),
         (Some(MkAdd) | Some(MkMul), Some(Plus)) => Action::ReduceTo(MkAdd),
 
         (Some(MkNum), Some(Star)) => Action::ShiftTo(MkMul),
@@ -57,7 +165,8 @@ fn next_action(state: Option<&State>, token: Option<&Lexeme>) -> Action {
         (Some(MkLetId), Some(Id(id))) => Action::MoveTo(MkLet(id.clone())),
         (Some(MkLet(id)), Some(Eq)) => Action::ShiftTo(MkLetBind(id.clone())),
         (Some(MkLetBind(_)), Some(In)) => Action::Reduce,
-        (Some(MkNum), Some(In)) => Action::ReduceInPlace,
+        (Some(MkNum) | Some(MkVar) | Some(MkAdd) | Some(MkMul), Some(In)) => Action::Reduce,
+        (Some(MkLetBody(_, _)), Some(In)) => Action::ShiftSame,
 
         (Some(MkLetBind(_)), Some(Num(_))) => Action::ShiftPush(MkNum),
         (Some(MkLetBody(_, _)), Some(Num(_))) => Action::ShiftPush(MkNum),
@@ -148,6 +257,7 @@ fn expr_parse(mut pool: &mut ExprPool, lex: &mut Lex) -> Result<ExprRef, String>
                 lex.consume();
             }
             Action::ShiftSame => {
+                dbg!("ShiftSame----------------", &states, &terms, token);
                 lexeme_push(&mut terms, token);
                 lex.consume();
             }
@@ -163,14 +273,9 @@ fn expr_parse(mut pool: &mut ExprPool, lex: &mut Lex) -> Result<ExprRef, String>
                 states.push(s);
                 lex.consume();
             }
-            Action::ReduceInPlace => {
-                dbg!(&states, &terms, token);
-                reduce(&mut pool, &mut terms, &mut states)?;
-            }
             Action::Reduce => {
-                dbg!(&states, &terms, token);
+                dbg!("Reduce----------------", &states, &terms, token);
                 reduce(&mut pool, &mut terms, &mut states)?;
-                lex.consume();
             }
             Action::Accept => {
                 let expr = pool.add(terms.pop().unwrap());
@@ -180,7 +285,10 @@ fn expr_parse(mut pool: &mut ExprPool, lex: &mut Lex) -> Result<ExprRef, String>
                     return Ok(expr);
                 }
             }
-            Action::Error => return Err(format!("Unexpected token {:?}", token)),
+            Action::Error => {
+                dbg!("Error----------------", &states, &terms, token);
+                return Err(format!("Unexpected token {:?}", token));
+            }
         }
     }
 }
@@ -259,7 +367,7 @@ mod test {
     }
 
     #[test]
-    fn test_let_parsing() {
+    fn test_let_basic() {
         let mut pool = ExprPool::new();
         let lex = Lex::new("let x = 5 in x");
         let result = parse(&mut pool, lex);
@@ -271,6 +379,27 @@ mod test {
                 Expr::Num(5),
                 Expr::id("x"),
                 Expr::Let("x".into(), ExprRef(0), ExprRef(1)),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_let_as_term() {
+        let mut pool = ExprPool::new();
+        let lex = Lex::new("5 + let x = 5 in x + 1");
+        let result = parse(&mut pool, lex);
+
+        assert_eq!(result, Ok(ExprRef(6)));
+        assert_eq!(
+            pool.0,
+            vec![
+                Expr::id("x"),
+                Expr::Num(1),
+                Expr::Num(5),
+                Expr::Binary(BinOp::Add, ExprRef(0), ExprRef(1)),
+                Expr::Num(5),
+                Expr::Let("x".into(), ExprRef(2), ExprRef(3)),
+                Expr::Binary(BinOp::Add, ExprRef(4), ExprRef(5))
             ]
         );
     }
